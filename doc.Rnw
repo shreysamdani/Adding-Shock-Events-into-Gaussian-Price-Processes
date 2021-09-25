@@ -1,0 +1,1091 @@
+\documentclass[12pt]{article}
+\usepackage{booktabs}
+\usepackage{titlesec}
+% Commands below set numbering system; see Latex manual page 92
+\usepackage{enumitem}
+\newcommand*{\Question}[1]{\section{#1}}
+\newcommand*{\Part}{\item}
+\usepackage{color}
+\usepackage{graphicx,tabularx, listings}
+\usepackage{enumitem}
+\usepackage{hyperref}
+% \setlist[enumerate,1]{label=(\alph*)}
+% \setlist[enumerate,2]{label=\roman*.}
+\usepackage[makeroom]{cancel}
+%\renewcommand{\CancelColor}{\red}
+\usepackage[normalem]{ulem}               % to strikethrough text
+\newcommand\redout{\bgroup\markoverwith
+{\textcolor{red}{\rule[0.5ex]{2pt}{0.8pt}}}\ULon}
+\newcommand{\hldef}[1]{\textcolor[rgb]{0.086,0.059,0.069}{#1}}%
+\newcommand{\hlsng}[1]{\textcolor[rgb]{0.186,0.659,0.269}{#1}}%
+\renewcommand{\hlopt}[1]{\textcolor[rgb]{0.5,0.5,0.5}{#1}}%
+%\usepackage{xcolor}
+\definecolor{MAblue}{rgb}{0.368417, 0.506779, 0.709798}
+\definecolor{MAyellow}{rgb}{0.880722, 0.611041, 0.142051}
+\definecolor{MAgreen}{rgb}{0.560181, 0.691569, 0.194885}
+\usepackage{titlesec}
+\setcounter{secnumdepth}{4}
+
+\titleformat{\paragraph}
+{\normalfont\normalsize\bfseries}{\theparagraph}{1em}{}
+\titlespacing*{\paragraph}
+{0pt}{3.25ex plus 1ex minus .2ex}{1.5ex plus .2ex}
+\usepackage{amsmath,amssymb,setspace,tabto,fancyhdr,sectsty,mathtools,listings, graphicx, mdframed}
+\usepackage{float,tikz}
+\usepackage[left=1in,right=1in,top=0.8in,bottom=1.0in]{geometry}
+\allowdisplaybreaks
+\setlength\parindent{0pt}
+% or whatever
+
+%\usepackage[latin1]{inputenc}
+\usepackage[utf8x]{inputenc}
+% or whatever
+
+%\usepackage{times}
+\usepackage[T1]{fontenc}
+
+
+% \BOLDSYMBOL????
+
+\usepackage{tikz}
+
+
+<<echo=FALSE>>=
+knitr::opts_chunk$set(engine="python", engine.path="~/anaconda3/envs/230p/bin/python", cache = T, echo=F)
+@
+
+
+
+% \SweaveOpts{engine=python}
+% \pagestyle{fancy}
+\sectionfont{\Large\fontfamily{lmdh}\selectfont}
+\begin{document}
+\title{Fabric Risk Industry Project}
+\author{Shrey Samdani\\}
+\maketitle
+\thispagestyle{empty}
+\pagebreak
+\section*{Project Proposal}
+
+We all know there are discrete events that affect the market. Macro events like recessions, market-driven breaks such as occur from over-leverage, and revaluations in fundamentals (e.g. “irrational exuberance”). Each type has a different signature in terms of how it affects prices. For example, market-driven events tend to drop and recover faster, while macro events tend to move slowly over a long time period.
+\\\\
+Historically, these events appear with a particular frequency, and can each be modeled as a Poisson arrival. The result is what is like what is called a compound Poisson process. The difference is that when an event arrives, it is not a one-period shock - its effect persists.
+\\\\
+In this project, we will attempt to solve and research the following question: 
+\\\\
+\textbf{What happens to the distribution of equity returns when we introduce non-Gaussian large shock events, versus the usual assumption of a Gaussian distribution?}
+\\\\
+We wish to observe changes both for the price paths and also for the ensemble distribution (the distribution of returns projected out to some period in the future). Do we see, for example, fatter tails; does risk grow at less than the square root of time?
+\\\\
+We can research this question in three phases:
+
+\begin{enumerate}
+\item	Run modified Monte-Carlo simulations of a price paths by simulating Poisson events with a time to a minimum price and a time to recovery and see how that affects the distributions.
+\begin{enumerate}
+\item	For simplicity, we can start by making the event constant (same shock and time to recovery for every event)
+\item	Next, we can add additional complexity/realism in our simulations by varying the shock parameters (effectively simulating the shocks with a Compound Poisson Process). Additionally, we can modify the volatility for the price paths when they are in the down period of events.
+\end{enumerate}
+\item	Add more realism by setting the events based on historical analysis of the return characteristics of market events. 
+
+\item	Modify \#1 and \#2 to see if the amount of run-up in prices before the event changes the nature of its signature. In particular, we modify the extremity or frequency of events based on the current path. For example, if there is a large run-up before the event, do the events tend to be more extreme?
+\begin{enumerate}
+\item	We will additionally test for path dependence by looking at historical events.
+\end{enumerate}
+\end{enumerate}
+As we get more involved with the project, we may see that we do not see fruitful results in our original question. However, the process of researching will likely give rise to additional questions. In such scenarios, we will attempt to follow down these new paths/questions and inspect any insights they may give.
+
+
+
+\pagebreak
+<<cache=F>>=
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from scipy.stats import expon, kurtosis, skew, uniform, norm, lognorm
+import statsmodels.api as sm
+import datetime
+import random
+from collections import Counter
+
+plt.style.use('seaborn')
+
+def simulate_log_prices(n, s0, T, m, u, vol, seed=1):
+    np.random.seed(seed)
+    time_periods = m * T
+    delta_t = T / time_periods
+    zs = np.random.normal(size=(n, time_periods))
+    exp = (u - vol ** 2 / 2) * delta_t + vol * np.sqrt(delta_t) * zs
+    prices = np.log(s0) + np.cumsum(exp, axis=1)
+    return prices
+
+
+def simulate_log_prices_shock(n, s0, T, m, u, vol, shock_func, shock_freq, vol_shock, seed=1):
+    log_prices = simulate_log_prices(n, s0, T, m, u, vol)
+    log_prices_shocked = simulate_log_prices(n, s0, T, m, u, vol_shock)
+    time_periods = m * T
+    delta_t = T / time_periods
+
+    price_diff = log_prices_shocked - log_prices
+    for i in range(n):
+        start = int(expon.rvs(scale=shock_freq) / delta_t)
+        while start < time_periods:
+            shock = shock_func()
+            end_index = min(time_periods, start + len(shock))
+            log_prices[i, start:end_index] += price_diff[i, start:end_index] + shock[:end_index - start]
+            start += int(expon.rvs(scale=shock_freq) / delta_t)
+
+    return log_prices
+
+
+def constant_shock_symmetric(shock_size, shock_length, m):
+    a = -4 * shock_size / shock_length**2
+    b = shock_size
+    x = np.linspace(0, shock_length, int(m * shock_length))
+    shock_values = a * np.square(x - shock_length / 2) + shock_size
+    def shock():
+        return shock_values
+    return shock
+
+
+def plot_prices(prices, title, T, stats, n_paths=100):
+    prices_plotted = prices[:n_paths]
+    left, width = 0.1, 0.65
+    bottom, height = 0.1, 0.65
+    spacing = 0.005
+
+    rect_scatter = [left, bottom, width, height]
+    rect_histx = [left, bottom + height + spacing, width, 0.2]
+    rect_histy = [left + width + spacing, bottom, 0.2, height]
+
+    plt.figure(figsize=(12/1.1, 5/1.1))
+
+    ax_price_paths = plt.axes(rect_scatter)
+    ax_price_paths.tick_params(direction='in', top=True, right=True)
+    ax_price_paths.set_ylim(prices_plotted.min(),
+                            prices_plotted.max())
+    ax_price_paths.set_xlabel('Years', fontsize=13)
+    ax_price_paths.set_ylabel('Log Price (S0 = 1)', fontsize=13)
+    ax_price_paths.set_xlim(0, T)
+    plt.title(title, fontsize=16)
+
+    ax_histy = plt.axes(rect_histy)
+    ax_histy.tick_params(direction='in', labelleft=False)
+    ax_histy.set_ylim(prices_plotted.min(), prices_plotted.max())
+    ax_histy.set_xticks([])
+
+    ax_price_paths.plot(np.linspace(0, T, prices.shape[1]),
+                        prices_plotted.T)
+
+    terminal_prices = prices[:, -1]
+    ax_histy.hist(terminal_prices, bins=100, orientation='horizontal', rwidth=1.3, edgecolor='C0')
+
+    plt.rc('text', usetex=True)
+    text = '\n'.join([
+        r'\underline{Terminal Log Prices}', '',
+        r'$\mathrm{ann}(\mu)=%.4f$' % (stats[0] / T),
+        r'$\mathrm{ann}(\sigma)=%.4f$' % (stats[1] / np.sqrt(T)),
+        r'$\mathrm{skew}=%.4f$' % stats[2],
+        r'$\mathrm{kurtosis}=%.4f$' % stats[3],
+        r'$\mathrm{median}=%.4f$' % stats[4],
+        r'$\mathrm{max}=%.4f$' % stats[5],
+        r'$\mathrm{min}=%.4f$' % stats[6],
+    ])
+
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+    plt.text(0.985, 0.015, text, fontsize=12,
+             transform=ax_histy.transAxes,
+             verticalalignment='bottom', bbox=props,
+             horizontalalignment='right')
+    plt.show()
+    plt.clf()
+
+
+def get_stats(terminal_prices):
+    return (
+        terminal_prices.mean(),
+        terminal_prices.std(),
+        skew(terminal_prices),
+        kurtosis(terminal_prices),
+        np.median(terminal_prices),
+        terminal_prices.max(),
+        terminal_prices.min()
+    )
+@
+
+
+\pagebreak
+\section*{Project Motivation}
+As mentioned in the proposal, we have seen shocks in the past that may not follow the normal distribution of log prices. As an example, let us consider the number of 35\% price drops from 1970 to 2020 in the S\&P 500. There are 5 such instances of these shocks. As a result, if the distribution is correctly specified, we should see an average of ~5 price shocks per price path simulated with this normal distribution. \\\\
+In specific, since we are looking at the log prices, we would want to count the number of instances that a shock of greater than $-\text{Log}[1-0.35]=0.4308$ occurs in each log price path. Shown below are 4 such simulations of log prices from 1970 to 2020. The volatility has been set to match the S\&P 500 (the red coloring shows a significant price drop).
+
+\begin{center}
+<<price.drop.simulations, results='hide'>>=
+prices = simulate_log_prices(10**4, 1, 252, 100, 0, 0.15432016021070638)
+
+def find_jumps(price_path, cutoff):
+    n = len(price_path)
+    running_max = [(price_path[0], 0)]
+    running_min = [(price_path[-1], n-1)]
+
+    for i in range(1, n):
+        if price_path[i] > running_max[-1][0]:
+            running_max.append((price_path[i], i))
+    for i in range(n-2, -1, -1):
+        if price_path[i] < running_min[-1][0]:
+            running_min.append((price_path[i], i))
+    running_min = running_min[::-1]
+    running_min_n = len(running_min)
+
+    drops = []
+    min_idx = 0
+    for price1, max_i in running_max:
+        price2, min_i = running_min[min_idx]
+        if max_i == n - 1:
+            break
+        while max_i >= min_i:
+            min_idx += 1
+            price2, min_i = running_min[min_idx]
+
+        drop = price1 - price2
+        if drop > cutoff:
+            drops.append((drop, (max_i, min_i)))
+
+    drops.sort()
+
+    existing_drops = []
+    while len(drops) > 0:
+        drop = drops.pop()
+        start, end = drop[1]
+        add = True
+        for _, (existing_start, existing_end) in existing_drops:
+            if existing_start <= start <= existing_end or existing_start <= end <= existing_end:
+                add = False
+                break
+        if add:
+            existing_drops.append(drop)
+    return existing_drops
+
+
+def plot_jumps(price_path, jumps):
+    index = pd.date_range(start='01/01/1970', end='01/01/2020', periods=len(price_path))
+    plt.plot(index, price_path, color='black')
+    for jump, (start, end) in jumps:
+        plt.plot(index[start:end], price_path[start:end], color='red')
+
+
+jumps = [find_jumps(price_path, -np.log(0.65)) for price_path in prices]
+long_jumps = [(jump, i) for i, jump in enumerate(jumps) if len(jump) > 2]
+
+i = 1
+fig = plt.figure(figsize=(10,7))
+for jumps_, idx in long_jumps[:4]:
+    plt.subplot(2, 2, i)
+    plot_jumps(prices[idx], jumps_)
+    i += 1
+fig.suptitle('Log Price with Significant Drops')
+fig.supxlabel('Date')
+fig.supylabel('Log Price')
+plt.show()
+@
+\end{center}
+
+Here, we show the frequency table of the number of price drops for each path of 10000 simulated log price paths.
+
+\begin{center}
+<<price.path.jump.table, results='asis'>>=
+
+n_jumps = [len(x) for  x in jumps] 
+n_jumps_table = pd.Series(Counter(n_jumps)).rename('Percentage').sort_index()
+n_jumps_table /= n_jumps_table.sum()
+n_jumps_table.index.name = 'Number of Drops'
+print(pd.DataFrame(n_jumps_table).reset_index().to_latex(index=False))
+@
+\end{center}
+
+We can see that there is a mean number of 1.2323 shocks over 10000 simulations in the 50 year period spanned above. Clearly, this number is different from the 5 observed shocks in the actual S\&P 500, indicating that the normal assumption of log prices is incorrect. In this report, we will attempt to better describe the distribution.
+
+\pagebreak
+\section{Background}
+Before we get into the project specifics, we begin with a background to pretext the analysis and results in this report. 
+\subsection{Definitions}
+\begin{itemize}
+\item \textbf{Shock:} A shock represents an event that causes a price path to drop by a certain amount. As a numerical example, a shock of $30\% = 0.3$ means that the stock price will drop by 30\%.
+\item \textbf{Shock Length:} The shock length is the length of time for which it takes for the drop in price of a shock to begin, reach its lowest point, and recover.
+\item \textbf{Shock Frequency:} The shock frequency represents the average waiting time between one shock and the next.
+\end{itemize}
+\subsection{Monte-Carlo Simulation}
+In order to simulate price paths, we employ a method known as Monte Carlo simulation. In this method, we first assume the distribution of stock price path (more specifically, the distribution of the \emph{increment} of a stock price path over a time interval). We then sample from this distribution to compute each price path increment, and combine the increments to create a price path over a specific time horizon.\\\\
+In our case, we start by assuming that the stock price at time $T$ can be modeled by the following equation:
+
+\begin{equation}
+S_T = S_0e^{\left(\mu - \frac{\sigma^2}{2}\right)\cdot T + \sigma \cdot \sqrt{T}\cdot W_T},
+\end{equation}
+where $W_T \sim N(0, T)$ is a standard Wiener process with $\mu$ as the log return and $\sigma$ as the log return volatility. \\\\
+Similarly, we can see that an increment on the logarithmic stock price will follow the following equation:
+\begin{equation}
+\text{Log}[S_{t,t+\Delta}] = \text{Log}[S_t] + \left(\mu - \frac{\sigma^2}{2}\right)\cdot \Delta + \sigma \cdot \sqrt{\Delta}\cdot W_\Delta
+\end{equation}
+
+We can use this fact to create sample logarithmic price paths for a stock given the proper parameters. If done properly, the terminal logarithmic asset prices should form a normal distribution.\\\\
+\textbf{Note:} For the rest of this paper, we will assume that $S_0=1$. Any other value of $S_0$ will just result in a vertical shift in the log price path.
+
+\subsection{Poisson Process}
+As mentioned in the proposal, we will be modeling the time between two shocks as a Poisson process. Simply put, the Poisson process is a stochastic process that models the times at which events/arrivals enter a system. Additionally, the Poisson process has the property that the waiting time between such events/arrivals can be modeled by an exponential distribution with density
+\begin{equation}
+f(x ; \lambda)= \begin{cases}\lambda e^{-\lambda x} & x \geq 0 \\ 0 & x<0\end{cases}
+\end{equation}
+As such, we model the waiting time between stocks using the above exponential distribution.
+
+\subsubsection{Compound Poisson Process}
+Above, we are essentially combining a poisson process with a Wiener process, where each arrival of the poisson process constitutes a "shock". However, the assumption here is that each shock is equivalent, which may not necessarily be the case. In our case, as we will see, we model the shock as a random variable in itself. This changes the process from a poisson process to a compound poisson process, since we have an indendent random variable that constitutes the arrival value of the poisson process.\\\\
+Mathematically, we can represent this as the following:
+\begin{equation}
+\text{Log}[S'_{t, t+\Delta}] = \text{Log}[S'_t] + \text{Log}[S_{t, t+\Delta}] + \sum^{N(t)}_{i=1} Y_i(t+\Delta),
+\end{equation}
+Where $S'(t)$ represents the shocked price at time $t$, $N(t)$ refers to the poisson process from section 1.3 and $Y_i(t+\Delta)$ is a random variable that represents the value of shock $i$ at time period $t+\Delta$.\\\\
+We will test different variants of $Y$ in this report.
+\\\\
+As an interesting side note, we find that this is very similar to the model represented in a paper\footnote{S. James Press. “A Modified Compound Poisson Process with Normal Compounding.” Journal of the American Statistical Association, vol. 63, no. 322, [American Statistical Association, Taylor \& Francis, Ltd.], 1968, pp. 607–13, \url{https://doi.org/10.2307/2284031}.} by S. James Press, where a Wiener process (like ours from above) was combined with a compound poisson gaussian process ($Y\sim N(\mu, \sigma)$). In the paper, it was mentioned that such a model can be used for "the study of accident causation; in the study of repeated occurrences in industrial situations; and in the study of the behavior of security price fluctuations," showing that such a model can be applied outside of just the distribution of logged prices. \\
+In a separate paper \footnote{S. James Press. “A Compound Events Model for Security Prices.” The Journal of Business, vol. 40, no. 3, University of Chicago Press, 1967, pp. 317–35, \url{http://www.jstor.org/stable/2351754}.} by the same author, we find that a very similar model has been used in order to model the distribution of logged security prices. As this model is simpler than the one we employ in this report, a closed form solution for the first 4 moments were attained. Surprisingly enough, as we will see, the distributional properties of these 4 moments closely resemble those from the resutls in this report. In particular, both models are skewed (nonzero skew), leptokurtic (positive kurtosis), more peaked at its mean than a normal distribution, have high probability mass in the tails, and can be multimodal. 
+
+\subsection{Annualization}
+Looking at equation (1), we can see that the log return scales with $T$ and the log return volatility scales with $\sqrt{T}$. To keep numbers more standardized, we can annualize mean by scaling it by a factor of $T$. We do this by dividing the terminal price mean by $T$ (measured in years) and by dividing volatility by $\sqrt{T}$ (measured in years). As an example (used later in the report), consider that we have daily parametrs $\mu_{daily}$ and $\sigma_{daily}$. As there are 252 trading days in a year, we model each day as 1/252 years and come up with the following equations:
+\begin{align}
+\mu_{daily} \cdot 252 &= \mu_{annual}\\
+\sigma_{daily} \cdot \sqrt{252} &= \sigma_{annual}
+\end{align}
+\pagebreak
+\section{Constant Shocks}
+We begin by noting how the behavior of the distribution changes as we add in constant shocks (every shock to the price path will be of the same length and amplitude). For our purposes, we will note changes in the distribution by looking at the first four moments, with emphasis on skew and kurtosis.\\\\
+In this section, we will use these sample parameters:
+\begin{itemize}
+\item $S_0 = 1$
+\item $\Delta_T = \frac{1}{12} =$ 1 month
+\item $\sigma = 0.15$
+\item $\mu = 0.07$
+\item number of simulations $= n = 10^5$
+\end{itemize}
+\subsection{Modeling the shock}
+The shock itself will be modeled by a parabola. We choose a parabola as it is the most intuitive to understand; a parabola is a common continuous and differentiable function. The amplitude of the parabola will be the shock, and it's width will be the shock length. We then take this parabola and overlay it on a log price path. As a visual interpretation, we can look at the following graphs (shock of 1 and time horizon 1).
+
+<<>>=
+n = 10**5
+
+vol = 0.15
+T = 5
+m = 12
+u = r = 0.07
+S0 = 1
+bins = 200
+
+shock_length = 1
+shock = -1
+shock_parabola = constant_shock_symmetric(shock, shock_length, m)()
+price_path = simulate_log_prices(1, S0, T, m, u, vol)[0]
+
+shocked_path = np.copy(price_path)
+start_idx = 23
+shocked_path[start_idx:start_idx + len(shock_parabola)] += shock_parabola
+
+x = np.linspace(0, T, m*T)
+
+fig, axs = plt.subplots(1, 3, figsize=(9, 3), sharey='all')
+axs[0].plot(np.linspace(0, shock_length, m), shock_parabola)
+axs[0].set_title('Shock Parabola')
+axs[1].plot(x, price_path)
+axs[1].set_title('Log Price Path')
+axs[2].plot(x, shocked_path)
+axs[2].set_title('Price Path with Shock Parabola')
+@
+
+The parabola on the left has been applied to the price path in the middle to create the price path in right.\\\\
+For reference, this is the equation for the parabola:
+
+\begin{equation}
+y = -4\frac{\text{shock size}}{(\text{shock length})^2}\cdot x^2+4\frac{\text{shock size}}{\text{shock length}}\cdot x; \quad y \leq 0
+\end{equation}
+
+One consideration we also have to take into account is whether or not to allow a "grace period" after one shock occurs - if should or should not be able to allow overlapping shocks. In practice, we have seen that one shock can begin before the previous one has ended, and in our simulations we model the same thing. This also allows for a more "pure" process, leading to more continuous graphs without breaks.\\\\
+
+To put this into context, let's consider a shock of 0.3 (30\% drop in price). Since we are looking at log prices, in log space this refers to a shock size of $\text{log}(1 - 0.3) = \text{log}(0.7)$ (since a drop of 0.3 means that we multiply the price by 0.7). Please see the following table for a list of the price drops in log coordinates. Additionally, since we are treating shocks as symmetric parabolas, the time to the bottom is exactly half of the shock length.
+
+\begin{center}
+<<shocks.chart, results='asis'>>=
+shocks = np.array([0.3, 0.5, 0.7])
+log_shocks = -np.log(1 - shocks)
+percents = [f'{shock * 100}%' for shock in shocks]
+print(pd.DataFrame({ 'Price Shock': shocks, 'Price Drop (%)': percents, 'Log Price Shock': log_shocks }).to_latex(index=False))
+@
+\end{center}
+
+\subsection{No Shock}
+As a control, we first look at the distribution of vanilla (no shock) log prices:
+
+<<>>=
+n = 10**5
+
+vol = 0.15
+T = 5
+m = 12
+u = r = 0.07
+S0 = 1
+bins = 200
+
+vanilla_prices = simulate_log_prices(n, S0, T, m, u, vol)
+terminal_prices = vanilla_prices[:, -1]
+stats = get_stats(terminal_prices)
+plot_prices(vanilla_prices, 'Vanilla Log Prices', T, stats, bins)
+@
+
+The key things to note here are that skew and kurtosis are both near 0, and approach 0 as $n\to\infty$. 
+
+\subsection{Adding in constant shocks}
+Looking at a time horizon of 5 years, a shock frequency of 3 years, a shock length of 1 year, and shocks of size 0.3, 0.5, 0.7, we observe the following changes to the terminal price distributions:
+
+<<>>=
+n = 10**5
+
+vol = 0.15
+T = 5
+m = 12
+u = r = 0.07
+S0 = 1
+bins = 200
+
+shocks = np.log(1 - np.array([0.3, 0.5, 0.7]))
+shock_freq = 3
+shock_length = 1
+
+for shock in shocks:
+    shock_func = constant_shock_symmetric(shock, shock_length, m)
+    prices = simulate_log_prices_shock(n, S0, T, m, u, vol, shock_func, shock_freq, vol)
+    terminal_prices = prices[:, -1]
+    stats = get_stats(terminal_prices)
+    shock_ = np.round(1 - np.exp(shock), 2)
+    plot_prices(prices, f'Log Prices (shock={shock_}, length={shock_length}, frequency={shock_freq})', T, stats, bins)
+
+@
+
+Visually, we can see that adding shocks definitely does affect the distribution of terminal prices. As we increase the size of the shock, the skew decreases and the kurtosis increases, shifting the distribution from normal to a new distribution. Additionally, we see that when increasing the shock to a high number like 0.7, the distribution starts to become slightly bimodal. \\\\
+% Although these graphs are not quite bimodal, we can see that in the extreme case, the modality starts to increase. For example, if we look at the graph in the Appendix referring to shock=0.7, length=2, frequency=3, there is clearly multimodality in the histogram. From a numerical standpoint, we can compute Sarle's Bimodality Coefficient $\Beta$, which suggests bimodality if $\beta > 5/9$:
+% 
+% \\\\
+For more graphs and variations, please see the Appendix section 7.1.
+
+
+\pagebreak
+\section{Shock Parameters vs First 4 moments}
+Given that we can compute the first 4 moments for any set of shock parameters, we can create a near continuous equation relating the shock parameters to each of the moments. To observe the effect and shape of each parameter (time horizon, shock, shock frequency, shock length), we vary one parameter at a time, keeping the other parameters constant. For added realism, we have fit the volatility to match the S\&P 500. For illustration purposes, we have used the following metrics for the constant shock parameters:
+\begin{itemize}
+\item Price Shock: 35\% (log price shock of 0.431)
+\item Shock Frequency: 2 years
+\item Shock Length: 1 year
+\item Time horizon: 5 years
+\end{itemize}
+
+The graphs below show how the first 4 moments of the terminal stock prices vary with changes in each of these parameters. The first four graphs describe the mean and standard deviation (volatility), and the latter four describe the skew and kurtosis. For example, in looking at the very first graph, we can see that both the mean and standard deviation of the terminal prices increase with a longer time horizon.
+
+\begin{center}
+<<cache=T, out.width='5in'>>=
+header = ['T', 'shock_freq', 'shock_length', 'shock', 'mean', 'sd', 'skew', 'kurtosis', 'median', 'max', 'min']
+    
+fields = ['mean', 'sd']
+data_T = pd.read_csv('simulation_data_T.csv', names = header).set_index('T')[fields]
+data_shock_freq = pd.read_csv('simulation_data_shock_freq.csv', names = header).set_index('shock_freq')[fields]
+data_shock_length = pd.read_csv('simulation_data_shock_length.csv', names = header).set_index('shock_length')[fields]
+data_shock = pd.read_csv('simulation_data_shock.csv', names = header).set_index('shock')[fields]
+fig, axs = plt.subplots(2, 2, figsize=(7, 7))
+axs[0, 0].plot(data_T.index, data_T, label=fields)
+axs[0, 0].set_xlabel('Time')
+axs[0, 0].set_title('Time to Maturity')
+axs[0, 0].legend()
+
+axs[0, 1].plot(1 - np.exp(data_shock.index), data_shock, label=fields)
+axs[0, 1].set_xlabel('Drop in Price')
+axs[0, 1].set_title('Shock')
+axs[0, 1].legend()
+
+axs[1, 0].plot(data_shock_freq.index, data_shock_freq, label=fields)
+axs[1, 0].set_xlabel('Frequency')
+axs[1, 0].set_title('Shock Frequency')
+axs[1, 0].legend()
+
+axs[1, 1].plot(data_shock_length.index, data_shock_length, label=fields)
+axs[1, 1].set_xlabel('Length')
+axs[1, 1].set_title('Shock Length')
+axs[1, 1].legend()
+plt.tight_layout()
+plt.show()
+
+fields = ['skew', 'kurtosis']
+data_T = pd.read_csv('simulation_data_T.csv', names = header).set_index('T')[fields]
+data_shock_freq = pd.read_csv('simulation_data_shock_freq.csv', names = header).set_index('shock_freq')[fields]
+data_shock_length = pd.read_csv('simulation_data_shock_length.csv', names = header).set_index('shock_length')[fields]
+data_shock = pd.read_csv('simulation_data_shock.csv', names = header).set_index('shock')[fields]
+
+fig, axs = plt.subplots(2, 2, figsize=(7, 7))
+axs[0, 0].plot(data_T.index, data_T, label=fields)
+axs[0, 0].set_xlabel('Time')
+axs[0, 0].set_title('Time to Maturity')
+axs[0, 0].legend()
+
+axs[0, 1].plot(1 - np.exp(data_shock.index), data_shock, label=fields)
+axs[0, 1].set_xlabel('Drop in Price')
+axs[0, 1].set_title('Shock')
+axs[0, 1].legend()
+
+axs[1, 0].plot(data_shock_freq.index, data_shock_freq, label=fields)
+axs[1, 0].set_xlabel('Frequency')
+axs[1, 0].set_title('Shock Frequency')
+axs[1, 0].legend()
+
+axs[1, 1].plot(data_shock_length.index, data_shock_length, label=fields)
+axs[1, 1].set_xlabel('Length')
+axs[1, 1].set_title('Shock Length')
+axs[1, 1].legend()
+plt.tight_layout()
+plt.show()
+
+
+@
+\end{center}
+
+Clearly, there are some patterns here! Although we have shown the first two moments, our focus will be primarily on the skew and kurtosis.
+
+\subsection{Shock}
+The first two moments of the shock graph change in general as expected: as the shock increases, the mean decreases while the volatility increases. There is somewhat of a logarithmic pattern to each of the two moments.\\\\
+When looking at the skew and kurtosis, we see that it stays near 0 up until approximately the volatility used in the simulations (0.15). Past this, we see that increasing the shock size actually changes the skew and kurtosis in a linear fashion.
+\subsection{Time to Maturity}
+By looking at the graph for the first two moments, we find that the dynamics between time, mean, and volatility are actually mostly unaffected by the shocks! Clearly, the mean scales with time and the volatility scales with the square root of time. In general, the standard deviation is higher and the mean is lower, but they scale in the same way as without the shocks.\\\\
+The skew and kurtosis are wildly different at low time horizons, but as the time horizon increases we can see that these go to 0. This makes sense: at a large time horizon, the normality of the distribution is higher.
+\subsection{Shock Frequency}
+Here, we see nothing particularly surprising. The higher the frequency, the lower the mean and the higher the volatility. This is to be expected, as more frequent shocks will have larger affects in the distribution.\\\\
+The skew and kurtosis match that of the time to maturity graph. This is expected, since shock frequency and time to maturity are both time relative terms - a high frequency and short time to maturity is similar to a low frequency and long time to maturity.
+\subsection{Shock Length}
+Here, the even moments and the odd moments behave in the same way. We see that mean and skew decrease linearly with shock length, and volatility and kurtosis increase with shock length. 
+
+\pagebreak
+\section{Adding Realism (S\&P 500)}
+In order to add more realism into our simulations, we model our parameters using the S\&P 500 as a benchmark.
+
+
+<<cache=T>>=
+sp500 = pd.read_csv('volatility_SP500_index_110_day_S0237_series.csv', index_col='Date', parse_dates=True)[['S&P 500']]
+
+def fix_date(x):
+    year = x.year
+    if x.year > 2022:
+        year = x.year - 100
+    return datetime.date(year, x.month, x.day)
+
+
+sp500.index = pd.to_datetime(pd.Series(sp500.index).apply(fix_date))
+sp500.sort_index(inplace=True)
+sp500['log_returns'] = np.log(sp500['S&P 500']) - np.log(sp500['S&P 500'].shift(1))
+sp500['log_return_annual'] = 252 * sp500['log_returns']
+sp500['log_vol'] = sp500['log_returns'].rolling('100D').std(ddof=0) * np.sqrt(252)
+
+sp500 = sp500.dropna()
+
+cutoff_quantile = 0.6
+
+cutoff = sp500['log_vol'].quantile(cutoff_quantile)
+non_shock_mean = sp500['log_vol'][sp500['log_vol'] < cutoff].mean()
+shock_mean = sp500['log_vol'].mean()
+plt.rc('text', usetex=False)
+plt.figure(figsize=(6.4,2.4))
+plt.plot(sp500['S&P 500'])
+plt.title('S&P 500 Price')
+plt.show()
+@
+
+\subsection{S\&P 500 Volatility}
+One of the ways we want to add realism is by matching the log return volatility that is described by the S\&P 500.\\
+
+<<>>=
+sp500['100 Day Rolling Log Return Volatility'] = sp500['log_vol']
+sp500['100 Day Rolling Log Return Volatility'].plot()
+plt.title('100 Day Rolling Log Return Volatility')
+plt.xlabel('')
+plt.show()
+@
+
+
+\begin{center}
+<<results='asis'>>=
+print(sp500['100 Day Rolling Log Return Volatility'].describe().to_latex())
+@
+\end{center}
+
+<<results='asis'>>=
+cutoff_quantile = 0.6
+
+cutoff = sp500['log_vol'].quantile(cutoff_quantile)
+vol_non_shock_mean = sp500['log_vol'][sp500['log_vol'] < cutoff].mean()
+
+print(f'We can see from above that the annualized volatility hovers around 15\% (including shocks). We can compute the volatility without shocks by computing the mean volatility using the bottom {cutoff_quantile * 100}\\% of values. We find this number to be {np.round(vol_non_shock_mean, 5)*100}\\%\\\\')
+@
+
+
+We can then incorporate these numbers by modifying our simulation to have the respective volatilities when outside or inside of a shock period.
+
+\subsection{Shock Length and Shock Magnitude}
+Furthermore, we can modify the shock length and shock magnitude to match historical data in the S\&P 500. Using data about past shocks computed by Richard Bookstaber (40 in total), we observe the following:
+
+<<results='hide', cache=T>>=
+past_events = pd.read_csv("SP 500 events for response curve 6.csv", parse_dates=True)
+
+past_events = past_events.rename(lambda col: col.replace('Catalyst: ',''), axis=1)
+past_events['End Date'] = pd.to_datetime(past_events['End Date'])
+past_events['Start Date'] = pd.to_datetime(past_events['Start Date'])
+past_events['Minimum Date'] = pd.to_datetime(past_events['Minimum Date'])
+past_events['Shock Length'] = past_events['End Date'] - past_events['Start Date']
+
+past_events = past_events.sort_values("Start Date")
+
+past_events['Time_Between_Shocks'] = past_events['Start Date'].diff()
+
+def get_return(df):
+    i = sp500.index.searchsorted(df['Start Date'])
+    beg_price = sp500['S&P 500'].iloc[i]
+
+    i = sp500.index.searchsorted(df['Minimum Date'])
+    bot_price = sp500['S&P 500'].iloc[i]
+
+    annualization_factor = np.sqrt(252 / np.busday_count(df['Start Date'].date(), df['Minimum Date'].date()))
+    return np.exp(annualization_factor * np.log(bot_price / beg_price)) - 1
+
+
+# past_events = past_events.loc[past_events.index[np.log(past_events.Shock+1) <- shock_mean]]
+past_events['time_between_shocks'] = past_events['Time_Between_Shocks'].dt.days
+past_events['shock_length'] = past_events['Shock Length'].dt.days
+past_events['Shock Length '] = past_events['shock_length']
+
+past_events['Shock'] = past_events.apply(get_return, axis=1)
+
+past_events['Shock Frequency'] = past_events['Time_Between_Shocks']
+past_events['Shock Frequency '] = past_events['time_between_shocks']
+
+past_events[['Shock', 'Shock Length ', 'Shock Frequency ']].hist(bins=15)
+
+plt.show()
+@
+
+
+<<results='asis', cache=T>>=
+print(r'\begin{center}')
+print(past_events[['Shock', 'Shock Length', 'Shock Frequency']].describe().to_latex())
+print(r'\end{center}')
+@
+
+\textbf{Note:} Rather than using the annualized return for the shock amount, we annualize the z score. Mathematically, this means that we scale the shock with respect to the square root of the time from the shock start to shock minimum (as opposed to scaling it linearly).\\\\
+Looking at the histograms, we can see that they can be somewhat modeled by known distributions. We can model the shock and shock length as lognormal distributions, fit to the data from above. Similarly, we can see that the shock frequency does in fact look similar to an exponential distribution, solidifying our assumption about poisson processes from above.\\\\
+Although these do not look like perfect matches of the distributions, they should be enough for our simulations to estimate a relatively good accuracy. Ideally, we would model this with more than 40 data points. \\\\
+If we incorporate these shock parameters in, we will effectively replace our poisson process with a compound poisson process, as our shock parabola is not a random variable rather than constant.\\\\
+
+\subsection{Incorporating the Realism Factors}
+Below, we show the simulations using the above metrics:
+\begin{itemize}
+\item \textbf{matching in-shock and out-of-shock volatility.} This is done by increasing the volatility in the brownian motion process during the case when we are in a shock. 
+\item \textbf{matching historical shock amplitudes.} As mentioned above, for each shock we now draw from a lognormal distribution fit from the shock data above.
+\item \textbf{matching historical shock lengths.} Similar to the shocks, we do this by drawing from a lognormal distribution fit to the historical shock lengths.
+\item \textbf{mathcing the mean frequency of events}. This is done by modifying our exponential distribution we use to pick the waiting times between each shock. We set the mean such that it matches the mean of the waiting times between shocks (approximately 1.9 years).
+\end{itemize}
+Additionally, we use a log return rate of 7\% (the "actuarial rate"). \\\\\textbf{Note:} We still use $S_0 = 1$, since we are looking at log prices. If we were to use a different starting price, we would just be shifting the graph up or down.
+
+
+<<>>=
+n = 10**5
+
+T = 5
+m = 12
+u = r = 0.07
+S0 = 1
+bins = 200
+
+def random_shock_symmetric(m):
+    shock_params = lognorm.fit(-np.log(past_events['Shock']+1))
+    shock_length_params = lognorm.fit(past_events['shock_length'] / 365)
+    shock_size_rv = lognorm(shock_params[0], 0, shock_params[2])
+    shock_length_rv = lognorm(shock_length_params[0], 0, shock_length_params[2])
+
+    def shock():
+        shock_size = -shock_size_rv.rvs()
+        shock_length = shock_length_rv.rvs()
+        return constant_shock_symmetric(shock_size, shock_length, m)()
+
+    return shock
+
+shock_freq = past_events['time_between_shocks'].mean() / 365
+# 
+shock_func = random_shock_symmetric(m)
+prices = simulate_log_prices_shock(n, S0, T, m, u, non_shock_mean, shock_func, shock_freq, 0.125)
+terminal_prices = prices[:, -1]
+stats = get_stats(terminal_prices)
+plot_prices(prices, f'Log Stock Prices (frequency={np.round(shock_freq, 3)} years)', T, stats, bins)
+@
+
+Clearly, we can see that the distribution of terminal prices is in fact affected by the shocks. The skew and kurtosis here are very significant different from 0, and the distribution does not match that of a normal distribution. In fact, this distribution looks more lognormal.\\\\
+Plotting the moments against time, we get:
+
+<<real.plot.1, results='hide'>>=
+header = ['T', 'shock_freq', 'shock_length', 'shock', 'mean', 'sd', 'skew', 'kurtosis', 'median', 'max', 'min']
+fields = ['mean', 'sd']
+data_T = pd.read_csv('simulation_data_T_real.csv', names = header).set_index('T')[fields]
+fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+axs[0].plot(data_T.index, data_T, label=fields)
+axs[0].set_xlabel('Time')
+axs[0].set_title('Time to Maturity vs Mean/Volatility')
+axs[0].legend()
+
+fields = ['skew', 'kurtosis']
+data_T = pd.read_csv('simulation_data_T_real.csv', names = header).set_index('T')[fields]
+axs[1].plot(data_T.index, data_T, label=fields)
+axs[1].set_xlabel('Time')
+axs[1].set_title('Time to Maturity vs Skew/Kurtosis')
+axs[1].legend()
+
+plt.show()
+@
+
+
+We see similar behavior as we did in the simulations from section 3. We can see that the skew and kurtosis seem to vary with the logarithm of time. Fitting this to our data, we get the following:
+
+<<fit.data.real, results='asis'>>=
+data_T = pd.read_csv('simulation_data_T_real.csv', names = header)
+data_T['Log_T'] = np.log(data_T['T'])
+
+skew_fit = sm.OLS.from_formula('skew ~ Log_T', data_T).fit()
+kurt_fit = sm.OLS.from_formula('kurtosis ~ Log_T', data_T).fit()
+
+fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+axs[0].plot(data_T.index, data_T['kurtosis'], label='Simulated Kurtosis')
+axs[0].plot(data_T.index, kurt_fit.predict(), label='OLS Fit Kurtosis')
+axs[0].set_xlabel('Time')
+axs[0].set_title('Kurtosis')
+axs[0].legend()
+
+axs[1].plot(data_T.index, data_T['skew'], label='Simulated Skew')
+axs[1].plot(data_T.index, skew_fit.predict(), label='OLS Fit Skew')
+axs[1].set_xlabel('Time')
+axs[1].set_title('Skew')
+axs[1].legend()
+plt.show()
+print('\\\\\\\\')
+print(kurt_fit.summary().as_latex())
+print('\\pagebreak')
+print(skew_fit.summary().as_latex())
+print('\\\\\\\\')
+@
+
+
+
+We see very high values of $R^2$ and a pretty good fit on the graph! We additionally now have an equation to model the skew and volatility as a function of the logarithm of the time horizon.
+\begin{align*}
+\text{Skew} &= -1.8259 + 0.4436\cdot\text{Log}[\text{Time}]\\
+\text{s.e. Intercept} &= 0.042\\
+\text{s.e. Log[Time]} &= 0.016
+\end{align*}
+
+\begin{align*}
+\text{Kurtosis} &= 5.1552 -1.42\cdot\text{Log}[\text{Time}]\\
+\text{s.e. Intercept} &= 0.238\\
+\text{s.e. Log[Time]} &= 0.091
+\end{align*}
+
+We can see that the skew starts low at around -1.8 and gradually increases with the logarithm of time (eventually reaching zero). Similarly, the kurtosis starts at around 5 and gradually decreases with the logarithm of time (eventually reaching 0). Given the relatively low standard errors and the high correlation, we assume that these parameters are close to the true values (assuming that the distribution is correct). The interesting fact here is that we can see that there is a strong relationship between the logarithm of the time horizon and higher moments.
+\subsection{Modeling the shock type}
+To add increased realism, we will further compound the shock by conditioning it on shock type. The shock type (Sentiment, Macro, Non-economic, or Market driven) will be chosen by a uniform random variable. The shock parameters will then be chosen based on the shock type.\\\\
+Below, even without many data points, we see that the for all shock types except the first one, the shocks follow somewhat of a lognormal distribution. For the shock type regarding "Catalyst: Sentiment, earnings, other market", we see that this one is more of a uniform distribution. We can first sample the shock type based on the probabilities below and then sample the shock frequency and shock amplitude based on the type of shock.\\\\
+
+\begin{center}
+<<shock.type.freqs, results='asis', cache=T>>=
+shock_type_freq = pd.DataFrame.from_dict({
+    'Shock Type': [list(past_events)[i] for i in range(4,8)],
+    'Frequency': [ (past_events.iloc[:, i] == 1).sum()/len(past_events) for i in range(4, 8) ]
+})
+print(shock_type_freq.to_latex(index=False)) 
+@
+\end{center}
+
+<<shock.type.graph, results='hide'>>=
+fig, axs = plt.subplots(2,4)
+fig.suptitle("Shock Parameters By Shock Type", fontsize='x-large')
+
+past_events.loc[past_events.index[(past_events.iloc[:, 4] == 1)]][['Shock', 'Shock Length ']].hist(ax=axs[0, :2])
+plt.figtext(0.28, 0.87, list(past_events)[4], va="center", ha="center",)
+past_events.loc[past_events.index[(past_events.iloc[:, 5] == 1)]][['Shock', 'Shock Length ']].hist(ax=axs[0, 2:])
+plt.figtext(0.75, 0.87, list(past_events)[5], va="center", ha="center",)
+past_events.loc[past_events.index[(past_events.iloc[:, 6] == 1)]][['Shock', 'Shock Length ']].hist(ax=axs[1, :2])
+plt.figtext(0.28, 0.43, list(past_events)[6], va="center", ha="center",)
+past_events.loc[past_events.index[(past_events.iloc[:, 7] == 1)]][['Shock', 'Shock Length ']].hist(ax=axs[1, 2:])
+plt.figtext(0.75, 0.43, list(past_events)[7], va="center", ha="center",)
+fig.tight_layout(h_pad=4)
+fig.subplots_adjust(top=0.78) 
+plt.show()
+@
+
+Simulating the price path, we see that it does have nonzero skew and kurtosis.
+
+<<real.paths.2>>=
+n = 10**5
+
+T = 5
+m = 12
+u = r = 0.07
+S0 = 1
+bins = 200
+get_event_rows = lambda i: past_events.loc[past_events.index[(past_events.iloc[:, i] == 1)]]
+
+
+shock_types = [
+    {
+        'shock_size_rv': uniform(*(uniform.fit(get_event_rows(4)['Shock']))),
+        'shock_length_rv': uniform(*(uniform.fit(get_event_rows(4)['shock_length'] / 365)))
+    },
+    {
+        'shock_size_rv': lognorm(*(lognorm.fit(-get_event_rows(5)['Shock']))),
+        'shock_length_rv': lognorm(*(lognorm.fit(get_event_rows(5)['shock_length'] / 365)))
+    },
+    {
+        'shock_size_rv': lognorm(*(lognorm.fit(-get_event_rows(6)['Shock']))),
+        'shock_length_rv': uniform(*(uniform.fit(get_event_rows(6)['shock_length'] / 365)))
+    },
+    {
+        'shock_size_rv': lognorm(*(lognorm.fit(-get_event_rows(7)['Shock']))),
+        'shock_length_rv': lognorm(*(np.where([0,1,0], 0, lognorm.fit(get_event_rows(7)['shock_length'] / 365))))
+    },
+]
+
+shock_probs = shock_type_freq['Frequency']
+
+def generate_numbers(n, rng):
+    choices = rng.choice(4, p=shock_probs, size=n)
+
+def weighted_random(w, n):
+    cumsum = np.cumsum(w)
+    rdm_unif = np.random.rand(n)
+    return np.searchsorted(cumsum, rdm_unif)
+
+
+def real_shock_symmetric(m):
+    numbers = [ {'shock_size_rv': [], 'shock_length_rv': [] } for _ in range(4)]
+    choices = []
+    def shock():
+        nonlocal choices
+        if len(choices) == 0:
+            choices = random.choices(range(4), weights=shock_probs, k=1000)
+        shock_rvs_idx = choices.pop()
+        if len(numbers[shock_rvs_idx]['shock_size_rv']) == 0:
+            numbers[shock_rvs_idx]['shock_size_rv'] = shock_types[shock_rvs_idx]['shock_size_rv'].rvs(size=1000).tolist()
+            numbers[shock_rvs_idx]['shock_length_rv'] = shock_types[shock_rvs_idx]['shock_length_rv'].rvs(size=1000).tolist()
+
+        shock_length =numbers[shock_rvs_idx]['shock_length_rv'].pop()
+        shock_size = numbers[shock_rvs_idx]['shock_size_rv'].pop()
+        return constant_shock_symmetric(-shock_size, shock_length, m)()
+
+    return shock
+
+shock_freq = past_events['time_between_shocks'].mean() / 365
+shock_func = real_shock_symmetric(m)
+prices = simulate_log_prices_shock(n, S0, T, m, u, non_shock_mean, shock_func, shock_freq, shock_mean*1.07)
+terminal_prices = prices[:, -1]
+stats = get_stats(terminal_prices)
+plot_prices(prices, f'Log Stock Prices (frequency={np.round(shock_freq, 3)} years)', T, stats, bins)
+@
+
+Similar to what we did in section 4.3, we plot the moments of these simulations as a function of time and fit the skew and kurtosis using the logarithm of time as our independent variable. 
+
+<<fit.real.2, eval=T>>=
+header = ['T', 'mean', 'sd', 'skew', 'kurtosis', 'median', 'max', 'min']
+fields = ['mean', 'sd']
+data_T = pd.read_csv('simulation_data_T_real2.csv', names = header).set_index('T')[fields]
+fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+axs[0].plot(data_T.index, data_T, label=fields)
+axs[0].set_xlabel('Time')
+axs[0].set_title('Time to Maturity vs Mean/Volatility')
+axs[0].legend()
+
+fields = ['skew', 'kurtosis']
+data_T = pd.read_csv('simulation_data_T_real2.csv', names = header).set_index('T')[fields]
+axs[1].plot(data_T.index, data_T, label=fields)
+axs[1].set_xlabel('Time')
+axs[1].set_title('Time to Maturity vs Skew/Kurtosis')
+axs[1].legend()
+
+plt.show()
+@
+
+
+Additionally, the regression results are shown here. 
+
+
+<<fit.real.2.reg, results='asis'>>=
+header = ['T', 'mean', 'sd', 'skew', 'kurtosis', 'median', 'max', 'min']
+data_T = pd.read_csv('simulation_data_T_real2.csv', names = header)
+data_T['Log_T'] = np.log(data_T['T'])
+
+skew_fit = sm.OLS.from_formula('skew ~ Log_T', data_T).fit()
+kurt_fit = sm.OLS.from_formula('kurtosis ~ Log_T', data_T).fit()
+
+fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+axs[0].plot(data_T.index, data_T['kurtosis'], label='Simulated Kurtosis')
+axs[0].plot(data_T.index, kurt_fit.predict(), label='OLS Fit Kurtosis')
+axs[0].set_xlabel('Time')
+axs[0].set_title('Kurtosis')
+axs[0].legend()
+ 
+axs[1].plot(data_T.index, data_T['skew'], label='Simulated Skew')
+axs[1].plot(data_T.index, skew_fit.predict(), label='OLS Fit Skew')
+axs[1].set_xlabel('Time')
+axs[1].set_title('Skew')
+axs[1].legend()
+plt.show()
+
+print('\\\\\\\\')
+print(kurt_fit.summary().as_latex())
+# print('\\pagebreak')
+print(skew_fit.summary().as_latex())
+print('\\\\\\\\')
+
+@
+
+Overall, these results are not as nice as the ones we saw in the previous section. The reason for this, most likely, is that we don't quite have all the data needed to properly simulate what the shocks look like. As such, we should take the results from these simulations with a grain of salt. \\\\
+Looking at these graphs, the same trends hold for the first two moments - they scale with time and the square root of time respectively. For skew and kurtosis, we see that at all time horizons, the skew and kurtosis is actually nonzero. Skew stays relatively constant around -0.5 with a jump from at time = 1. The kurtosis models that of a logarithmic graph much more, with a relatively high $R^2$ value.\\\\
+These results are not as accurate, but have the potential to be more accurate with the increase of data.
+
+\pagebreak
+\section{Extentions / Additional Realism}
+\subsection{Run Up before the shock}
+Another topic of interest that would add more realism to the simulations is adding the effect of a run up in determining the shock parameters. We hypothesize that having a large run up will lead to a larger drop. \\\\
+We categorize a run-up by statistics leading up to the shock itself. This includes the return and volatility at certain time periods up to 2 years before the shock. Unfortunately, we did not find that the run up significantly affects the shock, as shown by the low correlations between the variables. For more details, please see the graphs and regressions in the appendix section 7.2.
+
+\pagebreak
+\section{Results}
+\subsection{Overall}
+We see that by incorporating shocks into the price simulations, the distribution shifts  based on the time horizon. In general, we see that the normal assumption of log prices/returns is rejected when incorporating shocks. The resulting distribution does not seem to be well defined, as it has an inconsistent shape based on the shock parameters; we see that for high shock amplitudes, the distribution even goes from unimodal to bimodal.\\\\
+An additional fact we saw is that the run-up before a shock has no affect on the resulting distribution of log prices.
+\subsection{Short time horizons}
+Judging by the time graph in the previous section, we can see that looking at short term time horizons is definitely affected by the presence of these non-normal shocks. In the short term, skew decreases and kurtosis increases. We can see that these will affect significantly investments looking out 10-15 years. As a whole, by assuming a normal distribution, we are understating our risk in such investments.
+\subsection{Long time horizons}
+When looking at time horizons greater than 10-15 years, we see that the normal assumption is not rejected. By visually observing the histograms at such time horizons and by looking at the higher moments, we see that they match those that would be found in a normal distribution. As such, investors engaged in long term investing need not take the shocks into account, as they will get "smooted out" over time. 
+
+\pagebreak
+\section{Appendix}
+\subsection{Constant Shock Additional Graphs}
+These graphs show the distributions and moments of terminal stock prices given different scenarios. In specific, we try all combinations of the following parameters:
+\begin{itemize}
+\item \textbf{Time Horizon}: 5 years, 30 years
+\item \textbf{Shock Frequency}: 3 years, 7 years
+\item \textbf{Shock Lengths}: 1 year, 2 years
+\item \textbf{Price Shocks}: 30\%, 50\%, 70\%
+\end{itemize}
+
+<<appendix1, results='hide'>>=
+n = 10**5
+
+vol = 0.15
+T = 5
+m = 12
+u = r = 0.07
+S0 = 1
+bins = 200
+
+Ts = [5, 30]
+shock_freqs = [3, 7]
+shock_lengths = [1, 2]
+shocks =  np.log(1 - np.array([0.3, 0.5, 0.7]))
+for T in Ts:
+    vanilla_prices = simulate_log_prices(n, S0, T, m, u, vol)
+    exp_vanilla_prices = np.exp(vanilla_prices)
+    for shock_freq in shock_freqs:
+        for shock_length in shock_lengths:
+            for shock in shocks:
+                shock_func = constant_shock_symmetric(shock, shock_length, m)
+                prices = simulate_log_prices_shock(n, S0, T, m, u, vol, shock_func, shock_freq, vol)
+                terminal_prices = prices[:, -1]
+                stats = get_stats(terminal_prices)
+                shock_ = np.round(1 - np.exp(shock), 2)
+                plot_prices(prices, f'Log Prices (shock={shock_}, length={shock_length}, frequency={shock_freq})', T, stats, bins)
+@
+
+\pagebreak
+\subsection{Run Up Plots and Regressions}
+
+Here, we try to model the shock parameters (shock amplitude, shock length, time between shocks) as a function of the moments of time periods leading up to the shock itself. We take the first three moments from 30, 90, 180, 360, 540, and 720 days before the shock and regress against each of the above parameters. For more visibility, we also plot the features below along with their correlations.\\\\
+
+
+\textbf{Note:} The number at the end of each independent variable refers to the number of days before the shock that the statistic was computed at.
+
+<<appendix2, results='asis'>>=
+import time
+def get_old_return(days_back):
+    def from_date(date):
+        i = sp500.index.searchsorted(date - datetime.timedelta(days_back))
+        j = sp500.index.searchsorted(date)
+        return sp500['S&P 500'][j]/sp500['S&P 500'][i]
+    return from_date
+
+def get_old_vol(days_back):
+    def from_date(date):
+        i = sp500.index.searchsorted(date - datetime.timedelta(days_back))
+        j = sp500.index.searchsorted(date)
+        return sp500['log_returns'][i:j].std(ddof=0) * np.sqrt(252)
+    return from_date
+
+def get_old_skew(days_back):
+    def from_date(date):
+        i = sp500.index.searchsorted(date - datetime.timedelta(days_back))
+        j = sp500.index.searchsorted(date)
+        return skew(sp500['log_returns'][i:j])
+    return from_date
+
+
+formula = []
+days_list = [30, 90, 180, 360, 540, 720]
+
+plt.rc('text', usetex=False)
+for days in days_list:
+    past_events[f'log_return_{days}'] = past_events['Start Date'].apply(get_old_return(days))
+    past_events[f'log_vol_{days}'] = past_events['Start Date'].apply(get_old_vol(days))
+    past_events[f'log_skew_{days}'] = past_events['Start Date'].apply(get_old_skew(days))
+    formula.append(f'log_return_{days}')
+    formula.append(f'log_vol_{days}')
+    formula.append(f'log_skew_{days}')
+
+
+def plot_run_up(days_list, shock_param):
+    fig, axs = plt.subplots(len(days_list), 3, figsize=(10, len(days_list)*2))
+    stats = ['return', 'vol', 'skew']
+    for i, days in enumerate(days_list):
+        for j, stat in enumerate(stats):
+            axs[i, j].scatter(past_events[f'log_{stat}_{days}'], past_events[shock_param])
+            axs[i, j].set_title(f'log {stat} {days} vs \n{shock_param}', fontsize=14)
+            axs[i, j].set_xlabel(f'log {stat} {days}')
+            axs[i, j].set_ylabel(shock_param.replace('_', ' '))
+            props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+
+            x = np.ma.masked_invalid(past_events[f'log_{stat}_{days}'])
+            y = np.ma.masked_invalid(past_events[shock_param])
+            msk = (~x.mask & ~y.mask)
+            corr = np.ma.corrcoef(x[msk],y[msk])[1, 0]
+
+            t = f"Corr: {np.round(corr, 3)}"
+            axs[i, j].text(0.99, 0.01, t, fontsize=12,
+             transform=axs[i, j].transAxes,
+             verticalalignment='bottom', bbox=props,
+             horizontalalignment='right')
+    plt.tight_layout()
+    plt.show(block=False)
+    print(f'\\subsubsection{{Run Up vs {shock_param.replace("_", " ")}}}')
+    f = f'{shock_param} ~ {"+".join(formula)}'
+    print(sm.OLS.from_formula(f, past_events).fit().get_robustcov_results(cov_type='HAC',maxlags=1).summary().as_latex())
+
+plot_run_up(days_list, 'Shock')
+plot_run_up(days_list, 'shock_length')
+plot_run_up(days_list, 'time_between_shocks')
+@
+
+\textbf{Note:} In order to reduce serial correlation, regression results use the Newey-West covariance matrix.
+
+\end{document}
