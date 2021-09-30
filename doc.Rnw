@@ -295,7 +295,7 @@ Here, we show the frequency table of the number of price drops for each path of 
 <<price.path.jump.table, results='asis'>>=
 
 n_jumps = [len(x) for  x in jumps] 
-n_jumps_table = pd.Series(Counter(n_jumps)).rename('Percentage').sort_index()
+n_jumps_table = pd.Series(Counter(n_jumps)).rename('Fraction').sort_index()
 n_jumps_table /= n_jumps_table.sum()
 n_jumps_table.index.name = 'Number of Drops'
 print(pd.DataFrame(n_jumps_table).reset_index().to_latex(index=False))
