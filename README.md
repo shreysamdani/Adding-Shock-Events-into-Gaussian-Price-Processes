@@ -9,7 +9,7 @@ In this project, we will attempt to solve and research the following question:
 
 
 <b>What happens to the distribution of equity returns when we introduce non- Gaussian large shock events, versus the usual assumption of a Gaussian distribution?</b>
-Please see the report https://github.com/shreysamdani/Adding-Shock-Events-into-Gaussian-Price-Processes/blob/main/doc.pdf. For any code / the LaTeX behind the project, please see main.ipynb and doc.Rnw
+Please see the report https://github.com/shreysamdani/Adding-Shock-Events-into-Gaussian-Price-Processes/blob/main/doc.pdf. For any code / the LaTeX behind the project, please see main.ipynb and doc.Rnw. The Python environment used is specified in the environment.yml file.
 
 <hr>
 
